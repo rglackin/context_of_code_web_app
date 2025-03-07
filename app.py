@@ -1,7 +1,7 @@
 from flask import Flask
 from models import db
 from routes import bp as main_bp
-from my_logging.logger import setup_logging
+from my_logging.logger import setup_logging # type: ignore
 import logging
 
 app = Flask(__name__)
