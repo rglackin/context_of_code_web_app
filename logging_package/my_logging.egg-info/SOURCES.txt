@@ -1,0 +1,11 @@
+setup.py
+my_logging/__init__.py
+my_logging/colored_formatter.py
+my_logging/json_file_handler.py
+my_logging/logger.py
+my_logging.egg-info/PKG-INFO
+my_logging.egg-info/SOURCES.txt
+my_logging.egg-info/dependency_links.txt
+my_logging.egg-info/entry_points.txt
+my_logging.egg-info/requires.txt
+my_logging.egg-info/top_level.txt

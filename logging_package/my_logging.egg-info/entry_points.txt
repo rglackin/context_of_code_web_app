@@ -1,0 +1,2 @@
+[console_scripts]
+setup_logging = my_logging.logger:setup_logging

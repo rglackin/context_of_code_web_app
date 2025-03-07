@@ -1,0 +1,35 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "standard": {
+            "format": " %(levelname)s[%(asctime)s - %(name)s]: %(message)s",
+            "class": "my_logging.colored_formatter.ColoredFormatter"
+        },
+        "json": {
+            "format": "{\"asctime\": \"%(asctime)s\", \"name\": \"%(name)s\", \"levelname\": \"%(levelname)s\", \"message\": %(message)s}",
+            "class": "pythonjsonlogger.jsonlogger.JsonFormatter"
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "level": "INFO"
+        },
+        "file": {
+            "class": "my_logging.json_file_handler.JsonFileHandler",
+            "formatter": "json",
+            "level": "DEBUG",
+            "filename": "logs/%(date).json",
+            "mode": "a"
+        }
+    },
+    "loggers": {
+        "": {
+            "handlers": ["console", "file"],
+            "level": "DEBUG",
+            "propagate": true
+        }
+    }
+}
