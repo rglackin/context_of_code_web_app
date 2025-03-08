@@ -14,6 +14,8 @@ class Aggregator(db.Model):
     guid = db.Column(db.Text, unique=True, nullable=False)
     name = db.Column(db.Text, nullable=False)
 
+    devices = db.relationship('Device')
+    
     def __repr__(self):
         return f'<Aggregator {self.name}>'
     
@@ -24,6 +26,8 @@ class Device(db.Model):
     aggregator_id = db.Column(db.ForeignKey('aggregators.aggregator_id'), nullable=False)
     
     aggregator = db.relationship('Aggregator')
+    snapshots = db.relationship('Snapshot')
+    metric_types = db.relationship('DeviceMetricType')
 
     def __repr__(self):
         return f'<Device {self.name}>'
@@ -38,6 +42,7 @@ class Snapshot(db.Model):
     server_timezone_mins = db.Column(db.Integer, nullable=False)
     
     device = db.relationship('Device')
+    metrics = db.relationship('Metric')
 
     def __repr__(self):
         return f'<Snapshot {self.device_id}>'
@@ -49,6 +54,7 @@ class DeviceMetricType(db.Model):
     device_id = db.Column(db.ForeignKey('devices.device_id'), nullable=False)
     
     device = db.relationship('Device')
+    metrics = db.relationship('Metric')
 
     def __repr__(self):
         return f'<DeviceMetricType {self.name}>'
