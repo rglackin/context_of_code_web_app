@@ -12,7 +12,7 @@ setup_logging()
 app.logger.handlers = logging.getLogger().handlers
 app.logger.setLevel(logging.DEBUG)
 app.register_blueprint(main_bp)
-
+app.logger.info("App Setup Successfully")
 if __name__ == '__main__':
     
     with app.app_context():
