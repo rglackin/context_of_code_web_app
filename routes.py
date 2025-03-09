@@ -7,6 +7,7 @@ import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from dto_datamodel import *
+import json
 
 bp = Blueprint('main', __name__)
 logger = logging.getLogger(__name__)
@@ -20,12 +21,14 @@ def add_aggregator():
         data = request.get_json()
         logger.info("Received data")
         if not data:
+            logger.error("Invalid data received")
             return jsonify({"error": "Invalid data"}), 400
         
+        logger.debug(data)
         # Deserialize JSON to DTO
         logger.info("Deserializing JSON to DTO")
         logger.debug(f"Data: {data}")
-        aggregator_dto = DTO_Aggregator.from_dict(data)
+        aggregator_dto = DTO_Aggregator.from_json(data)
         logger.info("Deserialization complete")
         
         # Map DTO to models and save to the database
