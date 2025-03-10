@@ -150,10 +150,11 @@ def create_dash_app(flask_app):
             return gauge
 
         try:
-            logger.info(f"Fetching {metric_name} data for gauge")
+            logger.info(f"Fetching {metric_name} data for gauge with aggregator_id: {aggregator_id}")
             metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
                 .join(Metric)\
                 .join(DeviceMetricType)\
+                .join(Device)\
                 .filter(DeviceMetricType.name == metric_name, 
                         Device.aggregator_id == aggregator_id)\
                 .order_by(Snapshot.client_timestamp_epoch.desc())\
