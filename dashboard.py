@@ -544,6 +544,7 @@ def create_dash_app(flask_app):
             return html.Div("Please enter at least one stock symbol", style={'color': 'red'})
 
         try:
+            logger.info("Stock symbols input received")
             # Parse the input into a list of symbols
             symbols = [symbol.strip() for symbol in symbols_input.split(',')]
             if not symbols:
