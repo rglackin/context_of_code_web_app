@@ -38,6 +38,8 @@ def map_dto_to_model(aggregator_dto, session):
                 server_timestamp_epoch=int(datetime.now(timezone.utc).timestamp()),
                 server_timezone_mins=datetime.now(timezone.utc).utcoffset().total_seconds() // 60
             )
+            session.add(snapshot_model)
+            session.flush()
             
             for metric_dto in snapshot_dto.metrics:
                 # Check if the metric type already exists
@@ -49,6 +51,7 @@ def map_dto_to_model(aggregator_dto, session):
                     )
                     session.add(metric_type_model)
                     session.flush()
+                    
                 metric_model = Metric(
                     snapshot=snapshot_model,
                     value=metric_dto.value,
@@ -56,9 +59,6 @@ def map_dto_to_model(aggregator_dto, session):
                 )
                 
                 session.add(metric_model)
-                session.flush()
-            session.add(snapshot_model)
-            session.flush()
     session.commit()
     session.close()
     
