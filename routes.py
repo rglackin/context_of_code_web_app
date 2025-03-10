@@ -9,11 +9,22 @@ from sqlalchemy.orm import Session
 from dto_datamodel import *
 import json
 
+# Create blueprint - note we no longer need url_prefix here as it's defined in app.py
 bp = Blueprint('main', __name__)
 logger = logging.getLogger(__name__)
+
+# Root route for API
 @bp.route('/')
 def home():
-    return jsonify({"message": "Hello World"})
+    return jsonify({"message": "API is working - Dashboard is available at the root URL /"})
+
+# Aggregator route - now at /api/aggregator because of the prefix in app.py
+@bp.route('/aggregator', methods=['GET', 'POST'])
+def handle_aggregator():
+    if request.method == 'POST':
+        return add_aggregator()
+    elif request.method == 'GET':
+        return get_aggregator()
 
 def add_aggregator():
     try:
@@ -84,7 +95,8 @@ def get_aggregator():
                                     DTO_Metric(
                                         name=metric.device_metric_type.name,
                                         value=metric.value
-                                    ) for metric in snapshot.metrics                                    ]
+                                    ) for metric in snapshot.metrics
+                                ]
                             ) for snapshot in device.snapshots
                         ]
                     ) for device in aggregator.devices
@@ -99,10 +111,3 @@ def get_aggregator():
                         "status": "error",
                         "message": str(e)
                         }), 500
-
-@bp.route('/api/aggregator', methods=['GET', 'POST'])
-def handle_aggregator():
-    if request.method == 'POST':
-        return add_aggregator()
-    elif request.method == 'GET':
-        return get_aggregator()
