@@ -94,12 +94,14 @@ def create_dash_app(flask_app):
 
     def create_time_series_graph(metric_name):
         figure = go.Figure()
-    
+
         try:
             logger.info(f"Fetching {metric_name} data")
-            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
+            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value, Aggregator.name)\
                 .join(Metric)\
                 .join(DeviceMetricType)\
+                .join(Device)\
+                .join(Aggregator)\
                 .filter(DeviceMetricType.name == metric_name)\
                 .order_by(Snapshot.client_timestamp_epoch)\
                 .all()
@@ -107,48 +109,25 @@ def create_dash_app(flask_app):
             logger.debug(f"Number of {metric_name} records found: {len(metric_data)}")
             
             if metric_data:
-                # Create DataFrame and validate data
-                df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
-                
-                # Convert and validate values
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', errors='coerce')
-                df['value'] = pd.to_numeric(df['value'], errors='coerce')
-                
-                # Drop any NaN values that might have been created during conversion
-                df = df.dropna()
-                
-                if not df.empty:
-                    logger.info(f"Dataframe created for {metric_name}")
-                    logger.debug(f"Dataframe head: {df.head()}")
-                    figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
-                    figure.update_layout(
-                        xaxis_title='Time',
-                        yaxis_title=metric_name
+                df = pd.DataFrame(metric_data, columns=['timestamp', 'value', 'Aggregator'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+                figure = px.line(df, x='timestamp', y='value', color='Aggregator', title=f'{metric_name} Over Time')
+                figure.update_layout(
+                    xaxis_title='Time',
+                    yaxis_title=metric_name,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="center",
+                        x=0.5
                     )
-                    logger.debug(f"Graph created for {metric_name}")
-                else:
-                    logger.warning(f"No valid data points for {metric_name} after cleaning")
-                    figure.add_annotation(
-                        text="No valid data available",
-                        xref="paper", yref="paper",
-                        x=0.5, y=0.5, showarrow=False
-                    )
-            else:
-                logger.warning(f"No data returned for {metric_name}")
-                figure.add_annotation(
-                    text="No data available",
-                    xref="paper", yref="paper",
-                    x=0.5, y=0.5, showarrow=False
                 )
         except Exception as e:
             logger.error(f"Error updating {metric_name} graph: {str(e)}")
-            figure.add_annotation(
-                text=f"Error: {str(e)[:50]}...",
-                xref="paper", yref="paper",
-                x=0.5, y=0.5, showarrow=False
-            )
-    
+
         return figure
+
     @dash_app.callback(
         Output('cpu-percent-graph', 'figure'),
         [Input('refresh-button', 'n_clicks')]
