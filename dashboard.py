@@ -9,6 +9,8 @@ from sqlalchemy import desc, func
 import logging
 import os
 import re
+import requests
+from flask import request
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +113,7 @@ def create_dash_app(flask_app):
                 symbol = symbol_match.group(1)
                 stock_options.append({'label': symbol, 'value': symbol})
         default_stock = stock_options[0]['value'] if stock_options else None
-        
+
         return html.Div([
             html.H1("Stock Metrics", className="dashboard-title"),
             dcc.Interval(id='stock-interval-component', interval=30*1000, n_intervals=0),
@@ -133,7 +135,16 @@ def create_dash_app(flask_app):
                     dcc.Graph(id='stock-price-line-chart')
                 ], className="card")
             ], className="card-container"),
-            html.Button("Refresh Data", id="stock-refresh-button", className="nav-button")
+            html.Button("Refresh Data", id="stock-refresh-button", className="nav-button"),
+            html.H3("Add Stock Symbols", className="card-title"),
+                    dcc.Input(
+                        id='stock-symbols-input',
+                        type='text',
+                        placeholder='Enter comma-separated stock symbols (e.g., AAPL,MSFT,GOOG)',
+                        style={'width': '100%', 'marginBottom': '10px'}
+                    ),
+                    html.Button('Add Symbols', id='add-symbols-button', className="nav-button"),
+                    html.Div(id='symbols-status-message')
         ])
     
     def create_time_series_graph(metric_name):
@@ -519,4 +530,59 @@ def create_dash_app(flask_app):
             return go.Figure()
         return create_stock_line_chart(symbol)
 
+        # Add this to the existing callbacks
+    @dash_app.callback(
+        Output('symbols-status-message', 'children'),
+        [Input('add-symbols-button', 'n_clicks')],
+        [dash.State('stock-symbols-input', 'value')]
+    )
+    def update_stock_symbols(n_clicks, symbols_input):
+        if not n_clicks:
+            return ""
+
+        if not symbols_input:
+            return html.Div("Please enter at least one stock symbol", style={'color': 'red'})
+
+        try:
+            # Parse the input into a list of symbols
+            symbols = [symbol.strip() for symbol in symbols_input.split(',')]
+            if not symbols:
+                return html.Div("Please enter valid stock symbols", style={'color': 'red'})
+
+            base_url = request.url_root
+
+            if not base_url.startswith(('http://', 'https://')):
+                base_url = f"http://{base_url}"
+            
+            # Send the symbols to the server
+            response = requests.post(f"{base_url}/api/stock-symbols", json={'symbols': symbols})
+            logger.info("Request posted to add stock symbols at %s", response.url)
+            logger.info(f"Response status code: {response.status_code}")
+            
+            json_response = response.json()
+            logger.debug(f"Response JSON: {json_response}")
+            
+            if response.status_code == 200:
+                # Get valid and invalid symbols from the response
+                valid_symbols = json_response.get('symbols', [])
+                invalid_symbols = json_response.get('invalid_symbols', [])
+
+                # Create a success message
+                valid_msg = f"Successfully added {len(valid_symbols)} stock symbol(s): {', '.join(valid_symbols)}"
+
+                # If there were invalid symbols, add a warning message
+                if invalid_symbols:
+                    invalid_msg = f"Invalid symbols that were ignored: {', '.join(invalid_symbols)}"
+                    return html.Div([
+                        html.Div(valid_msg, style={'color': 'green'}),
+                        html.Div(invalid_msg, style={'color': 'orange', 'marginTop': '10px'})
+                    ])
+                else:
+                    return html.Div(valid_msg, style={'color': 'green'})
+            else:
+                error_msg = json_response.get('error', 'Unknown error occurred')
+                return html.Div(f"Error adding symbols: {error_msg}", style={'color': 'red'})
+        except Exception as e:
+            logger.error(f"Error updating stock symbols: {str(e)}")
+            return html.Div(f"An error occurred: {str(e)}", style={'color': 'red'})
     return dash_app

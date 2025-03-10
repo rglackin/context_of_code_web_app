@@ -8,11 +8,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from dto_datamodel import *
 import json
+from reticker import TickerExtractor
 
 # Create blueprint - note we no longer need url_prefix here as it's defined in app.py
 bp = Blueprint('main', __name__)
 logger = logging.getLogger(__name__)
 
+STOCK_SYMBOLS_CACHE = ["AAPL", "MSFT", "GOOG", "AMZN"]
 # Root route for API
 @bp.route('/')
 def home():
@@ -111,3 +113,77 @@ def get_aggregator():
                         "status": "error",
                         "message": str(e)
                         }), 500
+
+@bp.route('/stock-symbols', methods=['GET', 'POST'])
+def handle_stock_symbols():
+    if request.method == 'POST':
+        return add_stock_symbols()
+    elif request.method == 'GET':
+        return get_stock_symbols()
+
+def add_stock_symbols():
+    try:
+        global STOCK_SYMBOLS_CACHE
+        logger.info("Received stock symbols")
+        data = request.get_json()
+        logger.debug(f"Data received: {data}")
+        if not data or 'symbols' not in data:
+            return jsonify({"error": "No symbols provided"}), 400
+        
+        # Convert to uppercase and remove duplicates
+        input_symbols = [symbol.upper().strip() for symbol in data['symbols']]
+        input_symbols = list(set(input_symbols))  # Remove duplicates
+        
+        # Validate the symbols using reticker
+        extractor = TickerExtractor()
+        valid_symbols = []
+        invalid_symbols = []
+        
+        for symbol in input_symbols:
+            # Check if symbol is valid
+            extracted = extractor.extract(symbol)
+            if extracted and symbol in extracted:
+                valid_symbols.append(symbol)
+            else:
+                invalid_symbols.append(symbol)
+        
+        logger.info(f"Valid symbols: {valid_symbols}")
+        if invalid_symbols:
+            logger.warning(f"Invalid symbols: {invalid_symbols}")
+        
+        if not valid_symbols:
+            return jsonify({
+                "error": "No valid stock symbols provided",
+                "invalid_symbols": invalid_symbols
+            }), 400
+        
+        # Replace the cache with the new symbols
+        STOCK_SYMBOLS_CACHE = valid_symbols
+        
+        logger.info(f"Updated stock symbol cache: {STOCK_SYMBOLS_CACHE}")
+        
+        response_data = {
+            "message": f"{len(valid_symbols)} valid symbols received",
+            "symbols": valid_symbols,
+            "all_symbols": STOCK_SYMBOLS_CACHE
+        }
+        
+        if invalid_symbols:
+            response_data["warning"] = f"{len(invalid_symbols)} invalid symbols were ignored"
+            response_data["invalid_symbols"] = invalid_symbols
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error processing stock symbols: {e}")
+        return jsonify({"error": str(e)}), 500
+
+def get_stock_symbols():
+    try:
+        # Return the symbols from our cache
+        global STOCK_SYMBOLS_CACHE
+        logger.info(f"Returning stock symbols from cache: {STOCK_SYMBOLS_CACHE}")
+        return jsonify({"symbols": STOCK_SYMBOLS_CACHE}), 200
+    except Exception as e:
+        logger.error(f"Error retrieving stock symbols: {e}")
+        return jsonify({"error": str(e)}), 500
