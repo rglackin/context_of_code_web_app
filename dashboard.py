@@ -8,6 +8,7 @@ from models import db, Device, Aggregator, Snapshot, DeviceMetricType, Metric
 from sqlalchemy import desc, func
 import logging
 import os
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -95,12 +96,41 @@ def create_dash_app(flask_app):
         ])
     
     def get_stock_metrics_layout():
+        # Get unique stock symbols by extracting them from metric names
+        stock_metrics = db.session.query(DeviceMetricType.name)\
+            .filter(DeviceMetricType.name.like('Stock Price (%)'))\
+            .distinct()\
+            .all()
+
+        # Extract stock symbols from metric names
+        stock_options = []
+        for row in stock_metrics:
+            name = row[0]  # Extract string from SQLAlchemy Row
+            symbol_match = re.search(r'Stock Price \((.*?)\)', name)
+            if symbol_match:
+                symbol = symbol_match.group(1)
+                stock_options.append({'label': symbol, 'value': symbol})
+        default_stock = stock_options[0]['value'] if stock_options else None
+        
         return html.Div([
             html.H1("Stock Metrics", className="dashboard-title"),
             dcc.Interval(id='stock-interval-component', interval=30*1000, n_intervals=0),
             html.Div([
                 html.Div([
                     dcc.Graph(id='stock-price-graph')
+                ], className="card"),
+                html.Div([
+                    dcc.Graph(id='btc-usd-graph')
+                ], className="card"),
+                html.Div([
+                    dcc.Dropdown(
+                        id='stock-dropdown',
+                        options=stock_options,  # Use the processed list of options
+                        value=default_stock,
+                        placeholder="Select a Stock Symbol",
+                        clearable=False
+                    ),
+                    dcc.Graph(id='stock-price-line-chart')
                 ], className="card")
             ], className="card-container"),
             html.Button("Refresh Data", id="stock-refresh-button", className="nav-button")
@@ -164,6 +194,7 @@ def create_dash_app(flask_app):
                 
                 # Normalize data - calculate percentage change relative to first value for each stock
                 normalized_df = df.copy()
+                normalized_df['normalized_value'] = 0.0  # Initialize with default values
                 stocks = normalized_df['Stock'].unique()
                 
                 for stock in stocks:
@@ -176,18 +207,82 @@ def create_dash_app(flask_app):
                             normalized_df.loc[normalized_df['Stock'] == stock, 'normalized_value'] = \
                                 ((normalized_df.loc[normalized_df['Stock'] == stock, 'value'] - first_value) / first_value) * 100
                 
-                # Create the figure with normalized values
-                figure = px.line(
-                    normalized_df, 
-                    x='timestamp', 
-                    y='normalized_value', 
-                    color='Stock', 
-                    title='Stock Price Performance (% Change from Initial Price)'
-                )
+                # Remove any rows with NaN values
+                normalized_df = normalized_df.dropna(subset=['normalized_value'])
                 
+                # Make sure we still have data to plot
+                if not normalized_df.empty:
+                    # Create the figure using go.Figure and go.Scatter for more control
+                    figure = go.Figure()
+                    
+                    for stock in stocks:
+                        stock_data = normalized_df[normalized_df['Stock'] == stock]
+                        if not stock_data.empty:
+                            figure.add_trace(go.Scatter(
+                                x=stock_data['timestamp'],
+                                y=stock_data['normalized_value'],
+                                mode='lines',
+                                name=stock
+                            ))
+                    
+                    figure.update_layout(
+                        title='Stock Price Performance (% Change from Initial Price)',
+                        xaxis_title='Time',
+                        yaxis_title='Percentage Change (%)',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="center",
+                            x=0.5
+                        )
+                    )
+                    
+                    # Add a horizontal line at y=0 for reference
+                    figure.add_shape(
+                        type="line",
+                        x0=normalized_df['timestamp'].min(),
+                        x1=normalized_df['timestamp'].max(),
+                        y0=0,
+                        y1=0,
+                        line=dict(color="gray", width=1, dash="dash")
+                    )
+                else:
+                    logger.warning("No valid data after normalization for stocks")
+                    
+            else:
+                logger.warning("No stock data found")
+                    
+        except Exception as e:
+            logger.error(f"Error updating stock graph: {str(e)}")
+            # Log the full traceback for debugging
+            import traceback
+            logger.error(traceback.format_exc())
+    
+        return figure
+    
+    def create_btc_usd_time_series_graph():
+        figure = go.Figure()
+
+        try:
+            metric_name = "BTC-USD"
+            logger.info(f"Fetching {metric_name} data")
+            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
+                .join(Metric)\
+                .join(DeviceMetricType)\
+                .filter(DeviceMetricType.name == metric_name)\
+                .order_by(Snapshot.client_timestamp_epoch)\
+                .all()
+            logger.info(f"{metric_name} data fetched")
+            logger.debug(f"Number of {metric_name} records found: {len(metric_data)}")
+            
+            if metric_data:
+                df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+                figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
                 figure.update_layout(
                     xaxis_title='Time',
-                    yaxis_title='Percentage Change (%)',
+                    yaxis_title='Bitcoin value (USD)',
                     legend=dict(
                         orientation="h",
                         yanchor="bottom",
@@ -196,23 +291,9 @@ def create_dash_app(flask_app):
                         x=0.5
                     )
                 )
-                
-                # Add a horizontal line at y=0 for reference
-                figure.add_shape(
-                    type="line",
-                    x0=normalized_df['timestamp'].min(),
-                    x1=normalized_df['timestamp'].max(),
-                    y0=0,
-                    y1=0,
-                    line=dict(color="gray", width=1, dash="dash")
-                )
-                
         except Exception as e:
-            logger.error(f"Error updating stock graph: {str(e)}")
-            # Log the full traceback for debugging
-            import traceback
-            logger.error(traceback.format_exc())
-    
+            logger.error(f"Error updating {metric_name} graph: {str(e)}")
+
         return figure
     
     def create_gauge(metric_name, aggregator_id):
@@ -284,6 +365,58 @@ def create_dash_app(flask_app):
     
         return gauge
     
+    def create_stock_line_chart(symbol):
+        figure = go.Figure()
+
+        try:
+            metric_name = f"Stock Price ({symbol})"
+            logger.info(f"Fetching {metric_name} data")
+            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
+                .join(Metric)\
+                .join(DeviceMetricType)\
+                .filter(DeviceMetricType.name == metric_name)\
+                .order_by(Snapshot.client_timestamp_epoch)\
+                .all()
+            logger.info(f"{metric_name} data fetched")
+            logger.debug(f"Number of {metric_name} records found: {len(metric_data)}")
+            
+            if metric_data:
+                df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+                figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
+                figure.update_layout(
+                    xaxis_title='Time',
+                    yaxis_title='Stock Price (USD)',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="center",
+                        x=0.5
+                    )
+                )
+                
+                # Add current stock price as an annotation
+                if not df.empty:
+                    current_price = df['value'].iloc[-1]
+                    figure.add_annotation(
+                        text=f"${current_price:.2f}",
+                        x=df['timestamp'].iloc[-1],
+                        y=current_price,
+                        xref="x",
+                        yref="y",
+                        showarrow=True,
+                        arrowhead=2,
+                        ax=0,
+                        ay=-40,
+                        font=dict(size=14, color="red"),
+                        bgcolor="white"
+                    )
+        except Exception as e:
+            logger.error(f"Error updating {metric_name} line chart: {str(e)}")
+
+        return figure
+
     @dash_app.callback(
         Output('cpu-percent-graph', 'figure'),
         [Input('refresh-button', 'n_clicks')]
@@ -306,6 +439,13 @@ def create_dash_app(flask_app):
         return create_all_stocks_time_series_graph()
     
     @dash_app.callback(
+        Output('btc-usd-graph', 'figure'),
+        [Input('stock-refresh-button', 'n_clicks')]
+    )
+    def update_btc_usd_graph(n_clicks):
+        return create_btc_usd_time_series_graph()
+    
+    @dash_app.callback(
         Output('cpu-usage-gauge', 'figure'),
         [Input('refresh-button', 'n_clicks'),
          Input('aggregator-dropdown', 'value')]
@@ -321,6 +461,16 @@ def create_dash_app(flask_app):
     def update_ram_gauge(n_clicks, aggregator_id):
         return create_gauge('RAM Usage', aggregator_id)
     
+    @dash_app.callback(
+        Output('stock-price-line-chart', 'figure'),
+        [Input('stock-refresh-button', 'n_clicks'),
+         Input('stock-dropdown', 'value')]
+    )
+    def update_stock_line_chart(n_clicks, symbol):
+        if not symbol:
+            return go.Figure()
+        return create_stock_line_chart(symbol)
+
     # Add callback to update graphs when interval triggers
     @dash_app.callback(
         [Output('cpu-percent-graph', 'figure', allow_duplicate=True),
@@ -347,5 +497,26 @@ def create_dash_app(flask_app):
     )
     def update_all_stocks_graph_interval(n_intervals):
         return create_all_stocks_time_series_graph()
+    
+    # Add callback to update BTC-USD graph when interval triggers
+    @dash_app.callback(
+        Output('btc-usd-graph', 'figure', allow_duplicate=True),
+        [Input('stock-interval-component', 'n_intervals')],
+        prevent_initial_call=True
+    )
+    def update_btc_usd_graph_interval(n_intervals):
+        return create_btc_usd_time_series_graph()
+
+    # Add callback to update stock line chart when interval triggers
+    @dash_app.callback(
+        Output('stock-price-line-chart', 'figure', allow_duplicate=True),
+        [Input('stock-interval-component', 'n_intervals')],
+        [dash.State('stock-dropdown', 'value')],
+        prevent_initial_call=True
+    )
+    def update_stock_line_chart_interval(n_intervals, symbol):
+        if not symbol:
+            return go.Figure()
+        return create_stock_line_chart(symbol)
 
     return dash_app
