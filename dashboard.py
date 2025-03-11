@@ -116,7 +116,7 @@ def create_dash_app(flask_app):
 
         return html.Div([
             html.H1("Stock Metrics", className="dashboard-title"),
-            dcc.Interval(id='stock-interval-component', interval=30*1000, n_intervals=0),
+            dcc.Interval(id='stock-interval-component', interval=60*1000, n_intervals=0),
             html.Div([
                 html.Div([
                     dcc.Graph(id='stock-price-graph')
@@ -147,42 +147,45 @@ def create_dash_app(flask_app):
                     html.Div(id='symbols-status-message')
         ])
     
+    def fetch_metric_data(metric_name, aggregator_id=None):
+        try:
+            query = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)
+            if aggregator_id:
+                query = query.join(Metric).join(DeviceMetricType).join(Device)\
+                             .filter(DeviceMetricType.name == metric_name, Device.aggregator_id == aggregator_id)
+            else:
+                query = query.join(Metric).join(DeviceMetricType)\
+                             .filter(DeviceMetricType.name == metric_name)
+            query = query.order_by(Snapshot.client_timestamp_epoch)
+            return query.all()
+        except Exception as e:
+            logger.error(f"Error fetching {metric_name} data: {str(e)}")
+            return []
+
+    def create_time_series_figure(df, metric_name, yaxis_title):
+        figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
+        figure.update_layout(
+            xaxis_title='Time',
+            yaxis_title=yaxis_title,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="center",
+                x=0.5
+            )
+        )
+        return figure
+
     def create_time_series_graph(metric_name):
         figure = go.Figure()
-    
-        try:
-            logger.info(f"Fetching {metric_name} data")
-            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value, Aggregator.name)\
-                .join(Metric)\
-                .join(DeviceMetricType)\
-                .join(Device)\
-                .join(Aggregator)\
-                .filter(DeviceMetricType.name == metric_name)\
-                .order_by(Snapshot.client_timestamp_epoch)\
-                .all()
-            logger.info(f"{metric_name} data fetched")
-            logger.debug(f"Number of {metric_name} records found: {len(metric_data)}")
-            
-            if metric_data:
-                df = pd.DataFrame(metric_data, columns=['timestamp', 'value', 'Aggregator'])
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-                figure = px.line(df, x='timestamp', y='value', color='Aggregator', title=f'{metric_name} Over Time')
-                figure.update_layout(
-                    xaxis_title='Time',
-                    yaxis_title=metric_name,
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="center",
-                        x=0.5
-                    )
-                )
-        except Exception as e:
-            logger.error(f"Error updating {metric_name} graph: {str(e)}")
-    
+        metric_data = fetch_metric_data(metric_name)
+        if metric_data:
+            df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+            figure = create_time_series_figure(df, metric_name, metric_name)
         return figure
-    
+
     def create_all_stocks_time_series_graph():
         figure = go.Figure()
     
@@ -283,30 +286,14 @@ def create_dash_app(flask_app):
         try:
             metric_name = "BTC-USD"
             logger.info(f"Fetching {metric_name} data")
-            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
-                .join(Metric)\
-                .join(DeviceMetricType)\
-                .filter(DeviceMetricType.name == metric_name)\
-                .order_by(Snapshot.client_timestamp_epoch)\
-                .all()
+            metric_data = fetch_metric_data(metric_name)
             logger.info(f"{metric_name} data fetched")
             logger.debug(f"Number of {metric_name} records found: {len(metric_data)}")
             
             if metric_data:
                 df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-                figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
-                figure.update_layout(
-                    xaxis_title='Time',
-                    yaxis_title='Bitcoin value (USD)',
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="center",
-                        x=0.5
-                    )
-                )
+                figure = create_time_series_figure(df, metric_name, 'Bitcoin value (USD)')
         except Exception as e:
             logger.error(f"Error updating {metric_name} graph: {str(e)}")
 
@@ -314,123 +301,71 @@ def create_dash_app(flask_app):
     
     def create_gauge(metric_name, aggregator_id):
         gauge = go.Figure()
-    
         if not aggregator_id:
             logger.error("Aggregator ID not provided for %s gauge", metric_name)
             return gauge
-    
-        try:
-            logger.info(f"Fetching {metric_name} data for gauge with aggregator_id: {aggregator_id}")
-            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
-                .join(Metric)\
-                .join(DeviceMetricType)\
-                .join(Device)\
-                .filter(DeviceMetricType.name == metric_name, 
-                        Device.aggregator_id == aggregator_id)\
-                .order_by(Snapshot.client_timestamp_epoch.desc())\
-                .first()
-            logger.info(f"{metric_name} data for gauge fetched")
-    
-            if metric_data:
-                timestamp, value = metric_data
-                # Convert timestamp to readable format
-                readable_time = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
-    
-                # Create gauge with text components
-                gauge = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=value,
-                    title={
-                        'text': f"{metric_name}",
-                        'font': {'size': 24}
-                    },
-                    gauge={
-                        'axis': {'range': [0, 100]},
-                        'bar': {'color': "darkblue" if value < 70 else "red"},
-                        'steps': [
-                            {'range': [0, 50], 'color': 'lightgreen'},
-                            {'range': [50, 70], 'color': 'yellow'},
-                            {'range': [70, 100], 'color': 'pink'}
-                        ],
-                        'threshold': {
-                            'line': {'color': "red", 'width': 4},
-                            'thickness': 0.75,
-                            'value': 90
-                        }
+
+        metric_data = fetch_metric_data(metric_name, aggregator_id)
+        if metric_data:
+            timestamp, value = metric_data[0]
+            readable_time = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
+            gauge = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=value,
+                title={'text': f"{metric_name}", 'font': {'size': 24}},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': "darkblue" if value < 70 else "red"},
+                    'steps': [
+                        {'range': [0, 50], 'color': 'lightgreen'},
+                        {'range': [50, 70], 'color': 'yellow'},
+                        {'range': [70, 100], 'color': 'pink'}
+                    ],
+                    'threshold': {
+                        'line': {'color': "red", 'width': 4},
+                        'thickness': 0.75,
+                        'value': 90
                     }
-                ))
-    
-                # Add timestamp as an annotation
-                gauge.add_annotation(
-                    text=f"Last updated: {readable_time}",
-                    x=0.5,
-                    y=-0.25,
-                    xref="paper",
-                    yref="paper",
-                    showarrow=False,
-                    font=dict(size=14)
-                )
-    
-                # Customize layout for better text display
-                gauge.update_layout(
-                    height=250,
-                    margin=dict(l=20, r=20, t=60, b=60)  # Increased bottom margin for annotation
-                )
-        except Exception as e:
-            logger.error(f"Error updating {metric_name} gauge: {str(e)}")
-    
+                }
+            ))
+            gauge.add_annotation(
+                text=f"Last updated: {readable_time}",
+                x=0.5,
+                y=-0.25,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(size=14)
+            )
+            gauge.update_layout(
+                height=250,
+                margin=dict(l=20, r=20, t=60, b=60)
+            )
         return gauge
-    
+
     def create_stock_line_chart(symbol):
         figure = go.Figure()
-
-        try:
-            metric_name = f"Stock Price ({symbol})"
-            logger.info(f"Fetching {metric_name} data")
-            metric_data = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)\
-                .join(Metric)\
-                .join(DeviceMetricType)\
-                .filter(DeviceMetricType.name == metric_name)\
-                .order_by(Snapshot.client_timestamp_epoch)\
-                .all()
-            logger.info(f"{metric_name} data fetched")
-            logger.debug(f"Number of {metric_name} records found: {len(metric_data)}")
-            
-            if metric_data:
-                df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
-                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-                figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
-                figure.update_layout(
-                    xaxis_title='Time',
-                    yaxis_title='Stock Price (USD)',
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="center",
-                        x=0.5
-                    )
+        metric_name = f"Stock Price ({symbol})"
+        metric_data = fetch_metric_data(metric_name)
+        if metric_data:
+            df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+            figure = create_time_series_figure(df, metric_name, 'Stock Price (USD)')
+            if not df.empty:
+                current_price = df['value'].iloc[-1]
+                figure.add_annotation(
+                    text=f"${current_price:.2f}",
+                    x=df['timestamp'].iloc[-1],
+                    y=current_price,
+                    xref="x",
+                    yref="y",
+                    showarrow=True,
+                    arrowhead=2,
+                    ax=0,
+                    ay=-40,
+                    font=dict(size=14, color="red"),
+                    bgcolor="white"
                 )
-                
-                # Add current stock price as an annotation
-                if not df.empty:
-                    current_price = df['value'].iloc[-1]
-                    figure.add_annotation(
-                        text=f"${current_price:.2f}",
-                        x=df['timestamp'].iloc[-1],
-                        y=current_price,
-                        xref="x",
-                        yref="y",
-                        showarrow=True,
-                        arrowhead=2,
-                        ax=0,
-                        ay=-40,
-                        font=dict(size=14, color="red"),
-                        bgcolor="white"
-                    )
-        except Exception as e:
-            logger.error(f"Error updating {metric_name} line chart: {str(e)}")
-
         return figure
 
     @dash_app.callback(
@@ -487,7 +422,7 @@ def create_dash_app(flask_app):
             return go.Figure()
         return create_stock_line_chart(symbol)
 
-    # Add callback to update graphs when interval triggers
+    # Callback to update graphs when interval triggers
     @dash_app.callback(
         [Output('cpu-percent-graph', 'figure', allow_duplicate=True),
          Output('ram-usage-graph', 'figure', allow_duplicate=True),
@@ -497,45 +432,30 @@ def create_dash_app(flask_app):
         [dash.State('aggregator-dropdown', 'value')],
         prevent_initial_call=True
     )
-    def update_graphs_interval(n_intervals, aggregator_id):
-        logger.info(f"Interval refresh triggered")
+    def update_winos_graphs_interval(n_intervals, aggregator_id):
+        logger.info(f"Interval refresh triggered for WinOS metrics")
         cpu_figure = create_time_series_graph('CPU Percent')
         ram_figure = create_time_series_graph('RAM Usage')
         cpu_gauge = create_gauge('CPU Percent', aggregator_id)
         ram_gauge = create_gauge('RAM Usage', aggregator_id)
         return cpu_figure, ram_figure, cpu_gauge, ram_gauge
-    
-    # Add callback to update stock graph when interval triggers
-    @dash_app.callback(
-        Output('stock-price-graph', 'figure', allow_duplicate=True),
-        [Input('stock-interval-component', 'n_intervals')],
-        prevent_initial_call=True
-    )
-    def update_all_stocks_graph_interval(n_intervals):
-        return create_all_stocks_time_series_graph()
-    
-    # Add callback to update BTC-USD graph when interval triggers
-    @dash_app.callback(
-        Output('btc-usd-graph', 'figure', allow_duplicate=True),
-        [Input('stock-interval-component', 'n_intervals')],
-        prevent_initial_call=True
-    )
-    def update_btc_usd_graph_interval(n_intervals):
-        return create_btc_usd_time_series_graph()
 
-    # Add callback to update stock line chart when interval triggers
     @dash_app.callback(
-        Output('stock-price-line-chart', 'figure', allow_duplicate=True),
+        [Output('stock-price-graph', 'figure', allow_duplicate=True),
+         Output('btc-usd-graph', 'figure', allow_duplicate=True),
+         Output('stock-price-line-chart', 'figure', allow_duplicate=True)],
         [Input('stock-interval-component', 'n_intervals')],
         [dash.State('stock-dropdown', 'value')],
         prevent_initial_call=True
     )
-    def update_stock_line_chart_interval(n_intervals, symbol):
-        if not symbol:
-            return go.Figure()
-        return create_stock_line_chart(symbol)
+    def update_stock_graphs_interval(n_intervals, symbol):
+        logger.info(f"Interval refresh triggered for stock metrics")
+        stock_figure = create_all_stocks_time_series_graph()
+        btc_figure = create_btc_usd_time_series_graph()
+        stock_line_chart = create_stock_line_chart(symbol) if symbol else go.Figure()
+        return stock_figure, btc_figure, stock_line_chart
 
-        # Add this to the existing callbacks
+    # This callback will change the stock symbols returned by the /stock-symbols route
     @dash_app.callback(
     Output('symbols-status-message', 'children'),
     [Input('add-symbols-button', 'n_clicks')],
