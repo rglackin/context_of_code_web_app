@@ -162,6 +162,20 @@ def create_dash_app(flask_app):
             logger.error(f"Error fetching {metric_name} data: {str(e)}")
             return []
 
+    def fetch_metric_data_by_aggregator(metric_name):
+        try:
+            query = db.session.query(Snapshot.client_timestamp_epoch, Metric.value, Aggregator.name)\
+                              .join(Metric)\
+                              .join(DeviceMetricType)\
+                              .join(Device)\
+                              .join(Aggregator)\
+                              .filter(DeviceMetricType.name == metric_name)\
+                              .order_by(Snapshot.client_timestamp_epoch)
+            return query.all()
+        except Exception as e:
+            logger.error(f"Error fetching {metric_name} data: {str(e)}")
+            return []
+
     def create_time_series_figure(df, metric_name, yaxis_title):
         figure = px.line(df, x='timestamp', y='value', title=f'{metric_name} Over Time')
         figure.update_layout(
@@ -179,11 +193,30 @@ def create_dash_app(flask_app):
 
     def create_time_series_graph(metric_name):
         figure = go.Figure()
-        metric_data = fetch_metric_data(metric_name)
+        metric_data = fetch_metric_data_by_aggregator(metric_name)
         if metric_data:
-            df = pd.DataFrame(metric_data, columns=['timestamp', 'value'])
+            df = pd.DataFrame(metric_data, columns=['timestamp', 'value', 'aggregator'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
-            figure = create_time_series_figure(df, metric_name, metric_name)
+            for aggregator in df['aggregator'].unique():
+                agg_df = df[df['aggregator'] == aggregator]
+                figure.add_trace(go.Scatter(
+                    x=agg_df['timestamp'],
+                    y=agg_df['value'],
+                    mode='lines',
+                    name=aggregator
+                ))
+            figure.update_layout(
+                title=f'{metric_name} Over Time',
+                xaxis_title='Time',
+                yaxis_title=metric_name,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="center",
+                    x=0.5
+                )
+            )
         return figure
 
     def create_all_stocks_time_series_graph():
@@ -216,7 +249,7 @@ def create_dash_app(flask_app):
                     if not stock_data.empty:
                         # Get the first value for this stock
                         first_value = stock_data['value'].iloc[0]
-                        if first_value != 0:  # Avoid division by zero
+                        if (first_value != 0):  # Avoid division by zero
                             # Calculate percentage change from first value
                             normalized_df.loc[normalized_df['Stock'] == stock, 'normalized_value'] = \
                                 ((normalized_df.loc[normalized_df['Stock'] == stock, 'value'] - first_value) / first_value) * 100
@@ -374,7 +407,7 @@ def create_dash_app(flask_app):
     )
     def update_cpu_graph(n_clicks):
         return create_time_series_graph('CPU Percent')
-    
+
     @dash_app.callback(
         Output('ram-usage-graph', 'figure'),
         [Input('refresh-button', 'n_clicks')]
