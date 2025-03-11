@@ -245,8 +245,13 @@ def create_dash_app(flask_app):
                             yanchor="bottom",
                             y=1.02,
                             xanchor="center",
-                            x=0.5
-                        )
+                            x=0.5,
+                            itemsizing='constant',
+                            itemwidth=40,
+                        ),
+                        margin=dict(t=100),
+                        title_x=0.5,
+                        title_y=0.95
                     )
                     
                     # Add a horizontal line at y=0 for reference
