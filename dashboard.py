@@ -532,9 +532,9 @@ def create_dash_app(flask_app):
 
         # Add this to the existing callbacks
     @dash_app.callback(
-        Output('symbols-status-message', 'children'),
-        [Input('add-symbols-button', 'n_clicks')],
-        [dash.State('stock-symbols-input', 'value')]
+    Output('symbols-status-message', 'children'),
+    [Input('add-symbols-button', 'n_clicks')],
+    [dash.State('stock-symbols-input', 'value')]
     )
     def update_stock_symbols(n_clicks, symbols_input):
         if not n_clicks:
@@ -550,20 +550,21 @@ def create_dash_app(flask_app):
             if not symbols:
                 return html.Div("Please enter valid stock symbols", style={'color': 'red'})
 
-            base_url = request.url_root
+            # Import directly from routes and call the functions
+            from routes import add_stock_symbols_internal
 
-            if not base_url.startswith(('http://', 'https://')):
-                base_url = f"http://{base_url}"
-            
-            # Send the symbols to the server
-            response = requests.post(f"{base_url}/api/stock-symbols", json={'symbols': symbols})
-            logger.info("Request posted to add stock symbols at %s", response.url)
-            logger.info(f"Response status code: {response.status_code}")
-            
-            json_response = response.json()
-            logger.debug(f"Response JSON: {json_response}")
-            
-            if response.status_code == 200:
+            # Call the function directly instead of using HTTP
+            result = add_stock_symbols_internal({'symbols': symbols})
+
+            if isinstance(result, tuple):
+                json_response, status_code = result
+            else:
+                json_response = result
+                status_code = 200
+
+            logger.debug(f"Response: {json_response}, Status: {status_code}")
+
+            if status_code == 200:
                 # Get valid and invalid symbols from the response
                 valid_symbols = json_response.get('symbols', [])
                 invalid_symbols = json_response.get('invalid_symbols', [])
