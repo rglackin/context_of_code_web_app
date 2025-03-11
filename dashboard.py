@@ -9,8 +9,6 @@ from sqlalchemy import desc, func
 import logging
 import os
 import re
-import requests
-from flask import request
 
 logger = logging.getLogger(__name__)
 
@@ -147,16 +145,36 @@ def create_dash_app(flask_app):
                     html.Div(id='symbols-status-message')
         ])
     
-    def fetch_metric_data(metric_name, aggregator_id=None):
+    def base_metric_query(fetch_aggregator=False):
+        columns = [Snapshot.client_timestamp_epoch, Metric.value]
+        if fetch_aggregator:
+            columns.append(Aggregator.name)
+        return db.session.query(*columns).join(Metric).join(DeviceMetricType).join(Device)
+
+    def add_aggregator_join(query):
+        return query.join(Aggregator)
+
+    def add_metric_filter(query, metric_name):
+        return query.filter(DeviceMetricType.name == metric_name)
+
+    def add_aggregator_filter(query, aggregator_id):
+        return query.filter(Device.aggregator_id == aggregator_id)
+
+    def order_by_timestamp(query):
+        return query.order_by(desc(Snapshot.client_timestamp_epoch))
+
+    def add_limit(query, limit):
+        return query.limit(limit)
+
+    def fetch_metric_data(metric_name, aggregator_id=None, limit=None):
         try:
-            query = db.session.query(Snapshot.client_timestamp_epoch, Metric.value)
+            query = base_metric_query()
+            query = add_metric_filter(query, metric_name)
             if aggregator_id:
-                query = query.join(Metric).join(DeviceMetricType).join(Device)\
-                             .filter(DeviceMetricType.name == metric_name, Device.aggregator_id == aggregator_id)
-            else:
-                query = query.join(Metric).join(DeviceMetricType)\
-                             .filter(DeviceMetricType.name == metric_name)
-            query = query.order_by(Snapshot.client_timestamp_epoch)
+                query = add_aggregator_filter(query, aggregator_id)
+            query = order_by_timestamp(query)
+            if limit:
+                query = add_limit(query, limit)
             return query.all()
         except Exception as e:
             logger.error(f"Error fetching {metric_name} data: {str(e)}")
@@ -164,13 +182,10 @@ def create_dash_app(flask_app):
 
     def fetch_metric_data_by_aggregator(metric_name):
         try:
-            query = db.session.query(Snapshot.client_timestamp_epoch, Metric.value, Aggregator.name)\
-                              .join(Metric)\
-                              .join(DeviceMetricType)\
-                              .join(Device)\
-                              .join(Aggregator)\
-                              .filter(DeviceMetricType.name == metric_name)\
-                              .order_by(Snapshot.client_timestamp_epoch)
+            query = base_metric_query(fetch_aggregator=True)
+            query = add_aggregator_join(query)
+            query = add_metric_filter(query, metric_name)
+            query = order_by_timestamp(query)
             return query.all()
         except Exception as e:
             logger.error(f"Error fetching {metric_name} data: {str(e)}")
@@ -195,6 +210,7 @@ def create_dash_app(flask_app):
         figure = go.Figure()
         metric_data = fetch_metric_data_by_aggregator(metric_name)
         if metric_data:
+            logger.info(f"Data found for {metric_name}: {metric_data}")
             df = pd.DataFrame(metric_data, columns=['timestamp', 'value', 'aggregator'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             for aggregator in df['aggregator'].unique():
@@ -338,7 +354,7 @@ def create_dash_app(flask_app):
             logger.error("Aggregator ID not provided for %s gauge", metric_name)
             return gauge
 
-        metric_data = fetch_metric_data(metric_name, aggregator_id)
+        metric_data = fetch_metric_data(metric_name, aggregator_id, limit=1)
         if metric_data:
             timestamp, value = metric_data[0]
             readable_time = datetime.fromtimestamp(timestamp).strftime('%H:%M:%S')
@@ -385,10 +401,10 @@ def create_dash_app(flask_app):
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
             figure = create_time_series_figure(df, metric_name, 'Stock Price (USD)')
             if not df.empty:
-                current_price = df['value'].iloc[-1]
+                current_price = df['value'].iloc[0]
                 figure.add_annotation(
                     text=f"${current_price:.2f}",
-                    x=df['timestamp'].iloc[-1],
+                    x=df['timestamp'].iloc[0],
                     y=current_price,
                     xref="x",
                     yref="y",
